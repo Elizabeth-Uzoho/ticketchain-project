@@ -1,11 +1,19 @@
 import { useEffect, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+
 import OrganizerPortal from './components/OrganizerPortal';
 import AttendeePortal from './components/AttendeePortal';
 import VerifierPortal from './components/VerifierPortal';
 import Hero from './components/Hero';
 import ActiveEvents from './components/ActiveEvents';
+
 import './styles/app.css';
-import { getReadContract, normalizeEvent } from './lib/ticketchain';
+
+import {
+  getReadContract,
+  normalizeEvent,
+  connectWallet as connectMetaMaskWallet,
+} from './lib/ticketchain';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('selection');
@@ -18,30 +26,6 @@ export default function App() {
   const [tickets, setTickets] = useState([]);
   const [preselectedEvent, setPreselectedEvent] = useState(null);
 
-  async function connectWallet() {
-    try {
-      setWalletError('');
-
-      if (!window.ethereum) {
-        setWalletError('MetaMask is not installed.');
-        return;
-      }
-
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts',
-      });
-
-      if (accounts && accounts.length > 0) {
-        setWalletAddress(accounts[0]);
-        setIsWalletConnected(true);
-        await loadEventsFromBlockchain();
-      }
-    } catch (error) {
-      console.error(error);
-      setWalletError('Wallet connection failed.');
-    }
-  }
-
   async function loadEventsFromBlockchain() {
     try {
       const contract = await getReadContract();
@@ -53,11 +37,67 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (isWalletConnected) {
-      loadEventsFromBlockchain();
+  async function handleConnectWallet() {
+    try {
+      setWalletError('');
+
+      const result = await connectMetaMaskWallet();
+
+      if (result?.account) {
+        setWalletAddress(result.account);
+        setIsWalletConnected(true);
+        await loadEventsFromBlockchain();
+      } else {
+        setWalletError('No wallet account was returned.');
+      }
+    } catch (error) {
+      console.error(error);
+
+      if (error?.message) {
+        setWalletError(error.message);
+      } else {
+        setWalletError('Wallet connection failed.');
+      }
     }
-  }, [isWalletConnected]);
+  }
+
+  useEffect(() => {
+    loadEventsFromBlockchain();
+  }, []);
+
+  useEffect(() => {
+    let appUrlOpenListener;
+    let restoredResultListener;
+
+    async function setupDeepLinks() {
+      appUrlOpenListener = await CapacitorApp.addListener('appUrlOpen', (data) => {
+        console.log('App reopened from URL:', data.url);
+      });
+
+      restoredResultListener = await CapacitorApp.addListener(
+        'appRestoredResult',
+        (data) => {
+          console.log('App restored result:', data);
+        }
+      );
+
+      const launchData = await CapacitorApp.getLaunchUrl();
+      if (launchData?.url) {
+        console.log('App launched from URL:', launchData.url);
+      }
+    }
+
+    setupDeepLinks();
+
+    return () => {
+      if (appUrlOpenListener) {
+        appUrlOpenListener.remove();
+      }
+      if (restoredResultListener) {
+        restoredResultListener.remove();
+      }
+    };
+  }, []);
 
   function shortAddress(address) {
     return address ? `${address.slice(0, 6)}...${address.slice(-4)}` : '';
@@ -93,7 +133,7 @@ export default function App() {
             className={`wallet-connect-btn ${
               isWalletConnected ? 'wallet-connected' : ''
             }`}
-            onClick={connectWallet}
+            onClick={handleConnectWallet}
           >
             {!isWalletConnected ? (
               'Connect'
@@ -127,7 +167,9 @@ export default function App() {
             <div className="contact-modal-dark-layer"></div>
 
             <div className="contact-modal-inner">
-              <p className="contact-modal-mini-title">TicketChain Concert Support</p>
+              <p className="contact-modal-mini-title">
+                TicketChain Concert Support
+              </p>
 
               <h2 className="happy-booking-title">Happy Booking</h2>
 

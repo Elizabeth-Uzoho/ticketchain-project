@@ -12,7 +12,13 @@
     "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.103.3",
+    "@capacitor/android": "^8.3.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/cli": "^8.3.1",
+    "@capacitor/core": "^8.3.1",
+    "@capacitor/ios": "^8.3.1",
+    "@metamask/connect-evm": "^0.11.2",
+    "@supabase/supabase-js": "^2.104.0",
     "dotenv": "^16.4.7",
     "ethers": "^6.16.0",
     "mongodb": "^7.1.1",

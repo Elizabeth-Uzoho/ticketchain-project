@@ -1,7 +1,46 @@
 import concertBg from '../assets/concert.jpg';
+import footballBg from '../assets/football.jpg';
+import elizabethPicnicBg from '../assets/elizabethpicnic.jpg';
+import beyonceBg from '../assets/beyonce.jpg';
+import blockchainBg from '../assets/blockchain.jpg';
 
 export default function ActiveEvents({ events, onSelectEvent }) {
   const upcomingEvents = events.filter((event) => event.active);
+
+  const getEventImage = (eventName) => {
+    const name = eventName.toLowerCase().trim();
+
+    // 🎯 Specific events FIRST (very important)
+
+    if (name === 'beyonce picnic') {
+      return beyonceBg;
+    }
+
+    if (name === 'elizabeth picnic') {
+      return elizabethPicnicBg;
+    }
+
+    if (name.includes('blockchain')) {
+      return blockchainBg;
+    }
+
+    if (name === 'beyonce concert') {
+      return concertBg;
+    }
+
+    // ⚽ Sports fallback
+    if (
+      name.includes('league') ||
+      name.includes('football') ||
+      name.includes('soccer') ||
+      name.includes('stadium')
+    ) {
+      return footballBg;
+    }
+
+    // 🎵 Default fallback
+    return concertBg;
+  };
 
   return (
     <section className="upcoming-events-section">
@@ -26,7 +65,9 @@ export default function ActiveEvents({ events, onSelectEvent }) {
             <div key={event.id} className="upcoming-event-card">
               <div
                 className="upcoming-event-image"
-                style={{ backgroundImage: `url(${concertBg})` }}
+                style={{
+                  backgroundImage: `url(${getEventImage(event.eventName)})`,
+                }}
               >
                 <div className="upcoming-event-image-overlay">
                   <span className="upcoming-event-badge">Upcoming</span>

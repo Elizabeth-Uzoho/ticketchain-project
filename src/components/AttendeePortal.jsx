@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import concertBg from '../assets/concert.jpg';
-import { getSignerContract, normalizeTicket } from '../lib/ticketchain';
+import footballBg from '../assets/football.jpg';
+import elizabethPicnicBg from '../assets/elizabethpicnic.jpg';
+import beyonceBg from '../assets/beyonce.jpg';
+import blockchainBg from '../assets/blockchain.jpg';
+import {
+  getReadContract,
+  normalizeTicket,
+  safeWalletWrite,
+  safeWaitForTransaction,
+} from '../lib/ticketchain';
 
 export default function AttendeePortal({
   onBack,
@@ -12,11 +21,14 @@ export default function AttendeePortal({
   refreshEvents,
   preselectedEvent,
 }) {
-  const [activeSection, setActiveSection] = useState('browse');
+  const [activeSection, setActiveSection] = useState('');
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [selectedTicketType, setSelectedTicketType] = useState('');
   const [message, setMessage] = useState('');
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [showBookedTicketPopup, setShowBookedTicketPopup] = useState(false);
+  const [latestBookedTicket, setLatestBookedTicket] = useState(null);
+  const [isBooking, setIsBooking] = useState(false);
 
   useEffect(() => {
     if (preselectedEvent) {
@@ -28,6 +40,30 @@ export default function AttendeePortal({
     }
   }, [preselectedEvent]);
 
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getEventImage(eventName) {
+    const name = String(eventName || '').toLowerCase().trim();
+
+    if (name === 'beyonce picnic') return beyonceBg;
+    if (name === 'elizabeth picnic') return elizabethPicnicBg;
+    if (name.includes('blockchain')) return blockchainBg;
+    if (name === 'beyonce concert') return concertBg;
+
+    if (
+      name.includes('league') ||
+      name.includes('football') ||
+      name.includes('soccer') ||
+      name.includes('stadium')
+    ) {
+      return footballBg;
+    }
+
+    return concertBg;
+  }
+
   function handleSelectEvent(event) {
     setSelectedEvent(event);
     setSelectedTicketType('');
@@ -37,20 +73,64 @@ export default function AttendeePortal({
   }
 
   function closeBookingModal() {
+    if (isBooking) return;
     setShowBookingModal(false);
     setSelectedTicketType('');
     setMessage('');
   }
 
-  async function loadMyTickets() {
-    try {
-      if (!isWalletConnected) {
-        setMessage('Please connect MetaMask first.');
-        return;
-      }
+  function closeBookedTicketPopup() {
+    setShowBookedTicketPopup(false);
+  }
 
-      const contract = await getSignerContract();
-      const myTickets = await contract.getMyTickets();
+  function extractSerialValue(serialNumber) {
+    if (!serialNumber) return 0;
+    const digitsOnly = String(serialNumber).replace(/\D/g, '');
+    return digitsOnly ? Number(digitsOnly) : 0;
+  }
+
+  function sortTicketsNewestFirst(ticketList) {
+    return [...ticketList].sort((a, b) => {
+      const serialDiff =
+        extractSerialValue(b.serialNumber) - extractSerialValue(a.serialNumber);
+
+      if (serialDiff !== 0) return serialDiff;
+
+      const timeA = a.dateTime ? new Date(a.dateTime).getTime() : 0;
+      const timeB = b.dateTime ? new Date(b.dateTime).getTime() : 0;
+
+      return timeB - timeA;
+    });
+  }
+
+  function getFriendlyError(error) {
+    const text = String(
+      error?.reason || error?.shortMessage || error?.message || ''
+    );
+
+    const lower = text.toLowerCase();
+
+    if (
+      text.includes('ACTION_REJECTED') ||
+      lower.includes('user rejected') ||
+      lower.includes('user denied')
+    ) {
+      return 'Transaction was cancelled in MetaMask.';
+    }
+
+    if (lower.includes('insufficient funds')) {
+      return 'Insufficient funds to complete this transaction.';
+    }
+
+    return 'Booking could not be confirmed immediately. Please check My Tickets.';
+  }
+
+  async function loadMyTicketsSilently() {
+    if (!isWalletConnected) return [];
+
+    try {
+      const readContract = await getReadContract();
+      const myTickets = await readContract.getMyTickets({ from: walletAddress });
       const formatted = myTickets.map(normalizeTicket);
 
       const enriched = formatted.map((ticket) => {
@@ -64,15 +144,98 @@ export default function AttendeePortal({
         };
       });
 
-      setTickets(enriched);
-      setMessage('');
-    } catch (error) {
-      console.error(error);
-      setMessage('Failed to load tickets.');
+      const sortedTickets = sortTicketsNewestFirst(enriched);
+      setTickets(sortedTickets);
+      return sortedTickets;
+    } catch (fallbackError) {
+      console.error('readContract getMyTickets fallback failed:', fallbackError);
+
+      try {
+        const txReadContract = await safeWalletWrite((contract) => contract, {
+          retries: 0,
+        });
+
+        const myTickets = await txReadContract.getMyTickets();
+        const formatted = myTickets.map(normalizeTicket);
+
+        const enriched = formatted.map((ticket) => {
+          const evt = events.find((e) => String(e.id) === String(ticket.eventId));
+
+          return {
+            ...ticket,
+            eventName: evt?.eventName || `Event #${ticket.eventId}`,
+            dateTime: evt?.dateTime || null,
+            venue: evt?.venue || 'Unknown',
+          };
+        });
+
+        const sortedTickets = sortTicketsNewestFirst(enriched);
+        setTickets(sortedTickets);
+        return sortedTickets;
+      } catch (error) {
+        console.error('loadMyTicketsSilently error:', error);
+        return [];
+      }
     }
   }
 
+  async function loadMyTickets() {
+    if (!isWalletConnected) {
+      setMessage('Please connect MetaMask first.');
+      return [];
+    }
+
+    return await loadMyTicketsSilently();
+  }
+
+  async function findMatchingBookedTicket(ticketType) {
+    const loadedTickets = await loadMyTicketsSilently();
+
+    const exactMatch = loadedTickets.find((ticket) => {
+      return (
+        selectedEvent &&
+        String(ticket.eventId) === String(selectedEvent.id) &&
+        String(ticket.ticketType).toLowerCase() === String(ticketType).toLowerCase()
+      );
+    });
+
+    return exactMatch || loadedTickets[0] || null;
+  }
+
+  async function recoverBookingAfterTimeout(ticketType) {
+    setMessage('Checking blockchain status...');
+
+    for (let i = 0; i < 6; i += 1) {
+      try {
+        await refreshEvents();
+      } catch (error) {
+        console.error('refreshEvents attendee recovery error:', error);
+      }
+
+      const foundTicket = await findMatchingBookedTicket(ticketType);
+
+      if (foundTicket) {
+        setLatestBookedTicket(foundTicket);
+        setShowBookingModal(false);
+        setSelectedTicketType('');
+        setActiveSection('ticket');
+        setShowBookedTicketPopup(true);
+        setMessage('Ticket booked successfully.');
+        return true;
+      }
+
+      await wait(2500);
+    }
+
+    setMessage(
+      'MetaMask may have completed the transaction. Please open My Tickets again in a few seconds.'
+    );
+    return false;
+  }
+
   async function handleBookTicket() {
+    if (isBooking) return;
+
     try {
       if (!isWalletConnected) {
         setMessage('Please connect MetaMask first.');
@@ -89,44 +252,57 @@ export default function AttendeePortal({
         return;
       }
 
-      const contract = await getSignerContract();
-      const ticketTypeValue = selectedTicketType === 'VIP' ? 0 : 1;
+      setIsBooking(true);
+      setMessage('Opening MetaMask...');
 
+      const ticketTypeValue = selectedTicketType === 'VIP' ? 0 : 1;
       const valueToSend =
         selectedTicketType === 'VIP'
           ? selectedEvent.vipPriceWei
           : selectedEvent.regularPriceWei;
 
-      setMessage('Opening MetaMask...');
-      const tx = await contract.bookTicket(selectedEvent.id, ticketTypeValue, {
-        value: valueToSend,
-      });
+      const tx = await safeWalletWrite((contract) =>
+        contract.bookTicket(selectedEvent.id, ticketTypeValue, {
+          value: valueToSend,
+        })
+      );
 
-      setMessage('Waiting for confirmation...');
-      await tx.wait();
+      setMessage('Waiting for blockchain confirmation...');
+      await safeWaitForTransaction(tx);
 
-      await refreshEvents();
-      await loadMyTickets();
+      try {
+        await refreshEvents();
+      } catch (error) {
+        console.error('refreshEvents after booking:', error);
+      }
 
-      setMessage('Ticket booked successfully.');
+      const bookedTicket = await findMatchingBookedTicket(selectedTicketType);
+
       setShowBookingModal(false);
       setSelectedTicketType('');
       setActiveSection('ticket');
-    } catch (error) {
-      console.error(error);
 
-      if (error?.reason) {
-        setMessage(error.reason);
-      } else if (error?.message) {
-        setMessage(error.message);
-      } else {
-        setMessage('Booking failed.');
+      if (bookedTicket) {
+        setLatestBookedTicket(bookedTicket);
+        setShowBookedTicketPopup(true);
       }
+
+      setMessage('Ticket booked successfully.');
+    } catch (error) {
+      console.error('Attendee booking error:', error);
+
+      const recovered = await recoverBookingAfterTimeout(selectedTicketType);
+      if (!recovered) {
+        setMessage(getFriendlyError(error));
+      }
+    } finally {
+      setIsBooking(false);
     }
   }
 
   async function openMyTickets() {
     setActiveSection('ticket');
+    setMessage('');
     await loadMyTickets();
   }
 
@@ -141,7 +317,7 @@ export default function AttendeePortal({
 
       <div className="portal-card portal-card-glass">
         <button onClick={onBack} className="back-btn">
-          ← Back to Dashboard
+          ← Back to Homepage
         </button>
 
         <h1>Attendee Portal</h1>
@@ -167,6 +343,16 @@ export default function AttendeePortal({
           </button>
         </div>
 
+        {activeSection === '' && (
+          <div className="function-box attendee-function-box">
+            <h3>Welcome</h3>
+            <p className="dark-text">
+              Choose <strong>Browse Events</strong> to see available events or{' '}
+              <strong>My Tickets</strong> to view your booked tickets.
+            </p>
+          </div>
+        )}
+
         {activeSection === 'browse' && (
           <div className="function-box attendee-function-box">
             <h3>Available Events</h3>
@@ -180,22 +366,35 @@ export default function AttendeePortal({
                     key={event.id}
                     className="mini-display-card compact-event-card attendee-event-card"
                   >
-                    <p className="event-card-title">{event.eventName}</p>
-                    <p className="event-card-text">
-                      {new Date(event.dateTime).toLocaleString()}
-                    </p>
-                    <p className="event-card-text">{event.venue}</p>
-                    <p className="event-card-text">VIP: {event.vipPriceEth} ETH</p>
-                    <p className="event-card-text">
-                      Regular: {event.regularPriceEth} ETH
-                    </p>
-
-                    <button
-                      onClick={() => handleSelectEvent(event)}
-                      className="portal-small-btn event-select-btn"
+                    <div
+                      className="attendee-event-image"
+                      style={{
+                        backgroundImage: `url(${getEventImage(event.eventName)})`,
+                      }}
                     >
-                      Select Event
-                    </button>
+                      <div className="attendee-event-image-overlay">
+                        <span className="attendee-event-badge">Upcoming</span>
+                      </div>
+                    </div>
+
+                    <div className="attendee-event-content">
+                      <p className="event-card-title">{event.eventName}</p>
+                      <p className="event-card-text">
+                        {new Date(event.dateTime).toLocaleString()}
+                      </p>
+                      <p className="event-card-text">{event.venue}</p>
+                      <p className="event-card-text">VIP: {event.vipPriceEth} ETH</p>
+                      <p className="event-card-text">
+                        Regular: {event.regularPriceEth} ETH
+                      </p>
+
+                      <button
+                        onClick={() => handleSelectEvent(event)}
+                        className="portal-small-btn event-select-btn"
+                      >
+                        Select Event
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -218,6 +417,10 @@ export default function AttendeePortal({
                     key={ticket.serialNumber}
                     className={`fancy-ticket-card compact-fancy-ticket attendee-ticket-card ${
                       ticket.ticketType === 'VIP' ? 'vip-ticket' : 'regular-ticket'
+                    } ${
+                      latestBookedTicket?.serialNumber === ticket.serialNumber
+                        ? 'new-ticket-highlight'
+                        : ''
                     }`}
                   >
                     <div className="ticket-left-strip">
@@ -296,11 +499,12 @@ export default function AttendeePortal({
 
       {showBookingModal && selectedEvent && (
         <div className="booking-modal-overlay" onClick={closeBookingModal}>
-          <div
-            className="booking-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button className="booking-modal-close" onClick={closeBookingModal}>
+          <div className="booking-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="booking-modal-close"
+              onClick={closeBookingModal}
+              disabled={isBooking}
+            >
               ×
             </button>
 
@@ -316,6 +520,7 @@ export default function AttendeePortal({
             <div className="booking-ticket-options">
               <button
                 onClick={() => setSelectedTicketType('VIP')}
+                disabled={isBooking}
                 className={`ticket-option-card vip-option ${
                   selectedTicketType === 'VIP' ? 'ticket-option-selected' : ''
                 }`}
@@ -328,6 +533,7 @@ export default function AttendeePortal({
 
               <button
                 onClick={() => setSelectedTicketType('Regular')}
+                disabled={isBooking}
                 className={`ticket-option-card regular-option ${
                   selectedTicketType === 'Regular'
                     ? 'ticket-option-selected'
@@ -353,15 +559,78 @@ export default function AttendeePortal({
               <button
                 className="booking-main-btn"
                 onClick={handleBookTicket}
+                disabled={isBooking}
               >
-                Book Ticket
+                {isBooking ? 'Processing...' : 'Book Ticket'}
               </button>
 
               <button
                 className="booking-cancel-btn"
                 onClick={closeBookingModal}
+                disabled={isBooking}
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBookedTicketPopup && latestBookedTicket && (
+        <div
+          className="booking-modal-overlay"
+          onClick={closeBookedTicketPopup}
+        >
+          <div
+            className="booking-modal booked-ticket-popup"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="booking-modal-close"
+              onClick={closeBookedTicketPopup}
+            >
+              ×
+            </button>
+
+            <div className="booking-modal-header">
+              <p className="booking-modal-kicker">Booking Successful</p>
+              <h3 className="booking-modal-title">Your New Ticket</h3>
+            </div>
+
+            <div className="booked-ticket-preview">
+              <p className="booking-modal-info">
+                <strong>Event:</strong> {latestBookedTicket.eventName}
+              </p>
+              <p className="booking-modal-info">
+                <strong>Date:</strong>{' '}
+                {latestBookedTicket.dateTime
+                  ? new Date(latestBookedTicket.dateTime).toLocaleString()
+                  : 'N/A'}
+              </p>
+              <p className="booking-modal-info">
+                <strong>Venue:</strong> {latestBookedTicket.venue}
+              </p>
+              <p className="booking-modal-info">
+                <strong>Ticket Type:</strong> {latestBookedTicket.ticketType}
+              </p>
+              <p className="booking-modal-info">
+                <strong>Price:</strong> {latestBookedTicket.pricePaidEth || '--'} ETH
+              </p>
+              <p className="booking-modal-info">
+                <strong>Serial Number:</strong> {latestBookedTicket.serialNumber}
+              </p>
+              <p className="booking-modal-info">
+                <strong>Status:</strong>{' '}
+                {latestBookedTicket.isUsed ? 'USED' : 'VALID'}
+              </p>
+            </div>
+
+            <div className="booking-modal-actions">
+              <button
+                className="booking-main-btn"
+                onClick={closeBookedTicketPopup}
+              >
+                View My Tickets
               </button>
             </div>
           </div>

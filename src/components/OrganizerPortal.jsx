@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import footballBg from '../assets/football.jpg';
 import { ethers } from 'ethers';
-import { getSignerContract } from '../lib/ticketchain';
+import {
+  safeWalletWrite,
+  safeWaitForTransaction,
+} from '../lib/ticketchain';
 
 export default function OrganizerPortal({
   onBack,
@@ -17,8 +20,128 @@ export default function OrganizerPortal({
   const [vipPrice, setVipPrice] = useState('');
   const [regularPrice, setRegularPrice] = useState('');
   const [message, setMessage] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function normalizeText(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function hasMatchingEvent(eventList, expectedName, expectedVenue, expectedDateTime) {
+    return eventList.some((event) => {
+      const sameName =
+        normalizeText(event.eventName) === normalizeText(expectedName);
+
+      const sameVenue =
+        normalizeText(event.venue) === normalizeText(expectedVenue);
+
+      const eventTime = event.dateTime ? new Date(event.dateTime).getTime() : 0;
+      const expectedTime = expectedDateTime
+        ? new Date(expectedDateTime).getTime()
+        : 0;
+
+      const closeEnoughTime =
+        eventTime && expectedTime
+          ? Math.abs(eventTime - expectedTime) < 60000
+          : false;
+
+      return sameName && sameVenue && closeEnoughTime;
+    });
+  }
+
+  async function refreshEventsSafely() {
+    try {
+      const refreshed = await refreshEvents();
+      if (Array.isArray(refreshed)) {
+        return refreshed;
+      }
+    } catch (error) {
+      console.error('refreshEventsSafely error:', error);
+    }
+
+    return null;
+  }
+
+  async function recoverCreatedEvent(expectedName, expectedVenue, expectedDateTime) {
+    setMessage('Checking blockchain status...');
+
+    for (let i = 0; i < 6; i += 1) {
+      const refreshedEvents = await refreshEventsSafely();
+
+      if (
+        Array.isArray(refreshedEvents) &&
+        hasMatchingEvent(
+          refreshedEvents,
+          expectedName,
+          expectedVenue,
+          expectedDateTime
+        )
+      ) {
+        setEventName('');
+        setDateTime('');
+        setVenue('');
+        setVipPrice('');
+        setRegularPrice('');
+        setActiveSection('view');
+        setMessage('Event created successfully.');
+        return true;
+      }
+
+      if (
+        hasMatchingEvent(
+          events,
+          expectedName,
+          expectedVenue,
+          expectedDateTime
+        )
+      ) {
+        setEventName('');
+        setDateTime('');
+        setVenue('');
+        setVipPrice('');
+        setRegularPrice('');
+        setActiveSection('view');
+        setMessage('Event created successfully.');
+        return true;
+      }
+
+      await wait(2500);
+    }
+
+    setMessage(
+      'MetaMask may have completed the transaction. Please open View Events again in a few seconds.'
+    );
+    return false;
+  }
+
+  function getFriendlyError(error) {
+    const text = String(
+      error?.reason || error?.shortMessage || error?.message || ''
+    );
+
+    const lower = text.toLowerCase();
+
+    if (
+      text.includes('ACTION_REJECTED') ||
+      lower.includes('user rejected') ||
+      lower.includes('user denied')
+    ) {
+      return 'Transaction was cancelled in MetaMask.';
+    }
+
+    if (lower.includes('insufficient funds')) {
+      return 'Insufficient funds to complete this transaction.';
+    }
+
+    return 'Event creation could not be confirmed immediately. Please check View Events.';
+  }
 
   async function handleCreateEvent() {
+    if (isCreating) return;
+
     try {
       if (!isWalletConnected) {
         setMessage('Please connect MetaMask first.');
@@ -30,42 +153,48 @@ export default function OrganizerPortal({
         return;
       }
 
+      setIsCreating(true);
+      setMessage('MetaMask approval requested...');
+
+      const expectedName = eventName;
+      const expectedVenue = venue;
+      const expectedDateTime = dateTime;
+
       const eventTimestamp = Math.floor(new Date(dateTime).getTime() / 1000);
       const vipPriceWei = ethers.parseEther(vipPrice);
       const regularPriceWei = ethers.parseEther(regularPrice);
 
-      const contract = await getSignerContract();
-
-      setMessage('MetaMask approval requested...');
-      const tx = await contract.createEvent(
-        eventName,
-        eventTimestamp,
-        venue,
-        vipPriceWei,
-        regularPriceWei
+      const tx = await safeWalletWrite((contract) =>
+        contract.createEvent(
+          eventName,
+          eventTimestamp,
+          venue,
+          vipPriceWei,
+          regularPriceWei
+        )
       );
 
       setMessage('Waiting for blockchain confirmation...');
-      await tx.wait();
+      await safeWaitForTransaction(tx);
 
-      await refreshEvents();
+      await refreshEventsSafely();
 
       setEventName('');
       setDateTime('');
       setVenue('');
       setVipPrice('');
       setRegularPrice('');
-      setMessage('Event created successfully on blockchain.');
+      setMessage('Event created successfully.');
       setActiveSection('view');
     } catch (error) {
-      console.error(error);
-      if (error?.reason) {
-        setMessage(error.reason);
-      } else if (error?.message) {
-        setMessage(error.message);
-      } else {
-        setMessage('Failed to create event.');
+      console.error('Organizer create error:', error);
+
+      const recovered = await recoverCreatedEvent(eventName, venue, dateTime);
+      if (!recovered) {
+        setMessage(getFriendlyError(error));
       }
+    } finally {
+      setIsCreating(false);
     }
   }
 
@@ -78,7 +207,7 @@ export default function OrganizerPortal({
 
       <div className="portal-card portal-card-glass">
         <button onClick={onBack} className="back-btn">
-          ← Back to Dashboard
+          ← Back to Homepage
         </button>
 
         <h1>Organizer Portal</h1>
@@ -120,6 +249,7 @@ export default function OrganizerPortal({
               value={eventName}
               onChange={(e) => setEventName(e.target.value)}
               className="portal-input"
+              disabled={isCreating}
             />
 
             <input
@@ -127,6 +257,7 @@ export default function OrganizerPortal({
               value={dateTime}
               onChange={(e) => setDateTime(e.target.value)}
               className="portal-input"
+              disabled={isCreating}
             />
 
             <input
@@ -135,6 +266,7 @@ export default function OrganizerPortal({
               value={venue}
               onChange={(e) => setVenue(e.target.value)}
               className="portal-input"
+              disabled={isCreating}
             />
 
             <input
@@ -143,6 +275,7 @@ export default function OrganizerPortal({
               value={vipPrice}
               onChange={(e) => setVipPrice(e.target.value)}
               className="portal-input"
+              disabled={isCreating}
             />
 
             <input
@@ -151,10 +284,15 @@ export default function OrganizerPortal({
               value={regularPrice}
               onChange={(e) => setRegularPrice(e.target.value)}
               className="portal-input"
+              disabled={isCreating}
             />
 
-            <button onClick={handleCreateEvent} className="portal-small-btn">
-              Save Event
+            <button
+              onClick={handleCreateEvent}
+              className="portal-small-btn"
+              disabled={isCreating}
+            >
+              {isCreating ? 'Processing...' : 'Save Event'}
             </button>
 
             {message && <p className="portal-message">{message}</p>}
@@ -242,6 +380,8 @@ export default function OrganizerPortal({
                 ))}
               </div>
             )}
+
+            {message && <p className="portal-message">{message}</p>}
           </div>
         )}
       </div>

@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import verifierBg from '../assets/verifier.jpg';
-import { getReadContract, getSignerContract } from '../lib/ticketchain';
+import {
+  getReadContract,
+  safeWalletWrite,
+  safeWaitForTransaction,
+} from '../lib/ticketchain';
 
 export default function VerifierPortal({
   onBack,
@@ -10,8 +14,73 @@ export default function VerifierPortal({
   const [serialNumber, setSerialNumber] = useState('');
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getFriendlyError(error) {
+    const text = String(
+      error?.reason || error?.shortMessage || error?.message || ''
+    );
+
+    const lower = text.toLowerCase();
+
+    if (
+      text.includes('ACTION_REJECTED') ||
+      lower.includes('user rejected') ||
+      lower.includes('user denied')
+    ) {
+      return 'Transaction was cancelled in MetaMask.';
+    }
+
+    return 'Verification could not be confirmed immediately. Please check the ticket again.';
+  }
+
+  async function checkTicketStatus(ticketSerial) {
+    const readContract = await getReadContract();
+    return await readContract.checkTicket(ticketSerial);
+  }
+
+  async function recoverVerificationAfterTimeout(ticketSerial) {
+    setMessage('Checking ticket status...');
+
+    for (let i = 0; i < 6; i += 1) {
+      try {
+        const checkedAgain = await checkTicketStatus(ticketSerial);
+
+        if (checkedAgain.exists && checkedAgain.isUsed) {
+          setResult({
+            status: 'valid',
+            message: 'Valid Ticket',
+            ticket: {
+              eventName: checkedAgain.eventName,
+              venue: checkedAgain.venue,
+              ticketType: Number(checkedAgain.ticketType) === 0 ? 'VIP' : 'Regular',
+              serialNumber: ticketSerial,
+            },
+          });
+
+          setMessage('Ticket verified and marked as used.');
+          return true;
+        }
+      } catch (error) {
+        console.error('Verifier recovery error:', error);
+      }
+
+      await wait(2500);
+    }
+
+    setMessage(
+      'MetaMask may have completed verification. Please check this ticket again in a few seconds.'
+    );
+    return false;
+  }
 
   async function handleVerifyTicket() {
+    if (isVerifying) return;
+
     try {
       if (!isWalletConnected) {
         setMessage('Please connect MetaMask first.');
@@ -23,11 +92,13 @@ export default function VerifierPortal({
         return;
       }
 
+      setIsVerifying(true);
       setMessage('');
       setResult(null);
 
+      const cleanedSerial = serialNumber.trim();
       const readContract = await getReadContract();
-      const checked = await readContract.checkTicket(serialNumber);
+      const checked = await readContract.checkTicket(cleanedSerial);
 
       if (!checked.exists) {
         setResult({ status: 'invalid', message: 'Invalid Ticket' });
@@ -42,20 +113,22 @@ export default function VerifierPortal({
             eventName: checked.eventName,
             venue: checked.venue,
             ticketType: Number(checked.ticketType) === 0 ? 'VIP' : 'Regular',
-            serialNumber,
+            serialNumber: cleanedSerial,
           },
         });
         return;
       }
 
-      const signerContract = await getSignerContract();
       setMessage('MetaMask approval requested...');
-      const tx = await signerContract.verifyAndUseTicket(serialNumber);
+
+      const tx = await safeWalletWrite((contract) =>
+        contract.verifyAndUseTicket(cleanedSerial)
+      );
 
       setMessage('Waiting for blockchain confirmation...');
-      await tx.wait();
+      await safeWaitForTransaction(tx);
 
-      const checkedAgain = await readContract.checkTicket(serialNumber);
+      const checkedAgain = await readContract.checkTicket(cleanedSerial);
 
       setResult({
         status: 'valid',
@@ -64,20 +137,20 @@ export default function VerifierPortal({
           eventName: checkedAgain.eventName,
           venue: checkedAgain.venue,
           ticketType: Number(checkedAgain.ticketType) === 0 ? 'VIP' : 'Regular',
-          serialNumber,
+          serialNumber: cleanedSerial,
         },
       });
 
-      setMessage('Ticket verified and marked as used on blockchain.');
+      setMessage('Ticket verified and marked as used.');
     } catch (error) {
-      console.error(error);
-      if (error?.reason) {
-        setMessage(error.reason);
-      } else if (error?.message) {
-        setMessage(error.message);
-      } else {
-        setMessage('Failed to verify ticket.');
+      console.error('Verifier error:', error);
+
+      const recovered = await recoverVerificationAfterTimeout(serialNumber.trim());
+      if (!recovered) {
+        setMessage(getFriendlyError(error));
       }
+    } finally {
+      setIsVerifying(false);
     }
   }
 
@@ -90,12 +163,15 @@ export default function VerifierPortal({
 
       <div className="portal-card portal-card-glass">
         <button onClick={onBack} className="back-btn">
-          ← Back to Dashboard
+          ← Back to Homepage
         </button>
 
         <h1>Verifier Portal</h1>
         <p>Scan tickets to verify authenticity.</p>
-        {walletAddress && <p className="wallet-text">Connected Wallet: {walletAddress}</p>}
+
+        {walletAddress && (
+          <p className="wallet-text">Connected Wallet: {walletAddress}</p>
+        )}
 
         <div className="function-box">
           <h3>Verify Ticket</h3>
@@ -106,10 +182,15 @@ export default function VerifierPortal({
             value={serialNumber}
             onChange={(e) => setSerialNumber(e.target.value)}
             className="portal-input"
+            disabled={isVerifying}
           />
 
-          <button onClick={handleVerifyTicket} className="portal-small-btn">
-            Verify
+          <button
+            onClick={handleVerifyTicket}
+            className="portal-small-btn"
+            disabled={isVerifying}
+          >
+            {isVerifying ? 'Processing...' : 'Verify'}
           </button>
 
           {message && <p className="portal-message">{message}</p>}

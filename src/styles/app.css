@@ -1601,3 +1601,173 @@ input {
     width: 100%;
   }
 }
+
+/* =========================
+   VERIFIER RESULT CARD FIX
+========================= */
+.verification-result-card {
+  margin-top: 18px;
+  background: #ffffff !important;
+  border: 1px solid #e5e7eb;
+  border-radius: 22px;
+  padding: 24px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.verification-result-card,
+.verification-result-card p,
+.verification-result-card strong,
+.verification-result-card span {
+  color: #0f172a !important;
+}
+
+.verification-result-card p {
+  margin: 10px 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.verification-result-card strong {
+  color: #1e293b !important;
+}
+
+.function-box p,
+.function-box h3 {
+  color: #0f172a;
+}
+
+.portal-message {
+  color: #334155 !important;
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: white;
+  border-radius: 20px;
+  padding: 28px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+}
+
+.auth-card h1 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  color: #0f172a;
+}
+
+.auth-card p {
+  color: #475569;
+  margin-bottom: 18px;
+}
+
+.auth-switch-btn {
+  margin-top: 14px;
+  background: none;
+  border: none;
+  color: #2563eb;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.attendee-event-card {
+  overflow: hidden;
+  padding: 0;
+  border-radius: 24px;
+  background: #ffffff;
+}
+
+.attendee-event-image {
+  height: 190px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  position: relative;
+}
+
+.attendee-event-image-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.05));
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 16px;
+}
+
+.attendee-event-badge {
+  background: #ffffff;
+  color: #7c3aed;
+  font-weight: 800;
+  font-size: 0.95rem;
+  padding: 10px 18px;
+  border-radius: 999px;
+}
+
+.attendee-event-content {
+  padding: 22px;
+}
+
+.event-card-title {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.event-card-text {
+  margin: 0 0 10px;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.event-select-btn {
+  margin-top: 12px;
+}
+
+.new-ticket-highlight {
+  animation: newTicketGlow 1s ease-in-out 2;
+  border: 2px solid #7c3aed !important;
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.12), 0 14px 28px rgba(15, 23, 42, 0.16);
+}
+
+@keyframes newTicketGlow {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(124, 58, 237, 0);
+  }
+  50% {
+    transform: scale(1.03);
+    box-shadow: 0 0 18px rgba(124, 58, 237, 0.35);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+  }
+}
+
+.booked-ticket-popup {
+  max-width: 520px;
+}
+
+.booked-ticket-preview {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.booked-ticket-preview .booking-modal-info {
+  color: #1e293b;
+  margin-bottom: 10px;
+  line-height: 1.45;
+}
